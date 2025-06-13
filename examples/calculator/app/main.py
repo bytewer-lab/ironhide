@@ -58,15 +58,11 @@ class Calculator(GeminiAgent):
         return self.value
 
 
-agent = Calculator(value=999)
-
-
 @app.post("/")
 async def agent_message(
     message: Request,
 ) -> int:
     """Get response from agent."""
+    agent = Calculator(value=999)
     response = await agent.structured_chat(message.content, response_format=Response)
     return response.result
-
-# TODO: Gemini não funciona com tools e structured_output ao mesmo tempo.

@@ -5,7 +5,7 @@ response=$(curl -s -X 'POST' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
-  "content": "2+2"
+  "content": "opa beleza, meu nome é Lucas. Quanto é 2 + 2?"
 }')
 
 echo "$response"

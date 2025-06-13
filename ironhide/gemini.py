@@ -58,6 +58,26 @@ class _SchemaType(str, Enum):
     BOOLEAN = "BOOLEAN"
 
 
+class _FunctionCallingMode(str, Enum):
+    AUTO = "AUTO"
+    ANY = "ANY"
+    NONE = "NONE"
+
+
+class _FunctionCallingConfig(BaseModel):
+    mode: _FunctionCallingMode
+    allowed_function_names: list[str] | None = Field(
+        alias="allowedFunctionNames",
+        default=None,
+    )
+
+
+class _ToolConfig(BaseModel):
+    function_calling_config: _FunctionCallingConfig = Field(
+        alias="functionCallingConfig",
+    )
+
+
 class _PropertyDefinition(BaseModel):
     type: str
     description: str | None = None
@@ -190,11 +210,9 @@ class _Candidate(BaseModel):
 
 class _GeminiRequest(BaseModel):
     contents: list[_Content]
-    system_instruction: _SystemInstruction | None = Field(
-        alias="systemInstruction",
-        default=None,
-    )
+    system_instruction: _SystemInstruction | None = None
     tools: list[_Tool] | None = None
+    tool_config: _ToolConfig | None = None
     generation_config: _GenerationConfig | None = Field(
         alias="generationConfig",
         default=None,
@@ -221,6 +239,7 @@ class _Error(BaseModel):
 
 class _ErrorResponse(BaseModel):
     error: _Error
+
 
 # TODO: da pra tirar
 class _Reason(BaseModel):
@@ -500,9 +519,24 @@ class GeminiAgent(ABC):
 
         data = _GeminiRequest(
             contents=gemini_messages,
-            systemInstruction=system_instruction,
+            system_instruction=system_instruction,
             tools=self.tools or None,
-            generationConfig=self._make_generation_config(current_response_format),
+            tool_config=(
+                _ToolConfig(
+                    functionCallingConfig=_FunctionCallingConfig(
+                        mode=_FunctionCallingMode.NONE
+                        if current_response_format
+                        else _FunctionCallingMode.AUTO,
+                    ),
+                )
+                if self.tools
+                else None
+            ),
+            generationConfig=(
+                self._make_generation_config(current_response_format)
+                if current_response_format
+                else None
+            ),
         )
 
         logger.debug(
@@ -538,13 +572,15 @@ class GeminiAgent(ABC):
             break
 
         gemini_response = _GeminiResponse(**response.json())
+        logger.debug(
+            gemini_response.model_dump_json(by_alias=True, exclude_none=True, indent=4),
+        )
         content = gemini_response.candidates[0].content
         self._add_message(content)
         return content
 
     def _add_message(self, content: _Content) -> None:
         self.messages.append(content)
-        logger.info(content.model_dump_json(by_alias=True, exclude_none=True, indent=4))
 
     async def _context_provider(self, input_message: str) -> str:
         return input_message
@@ -555,7 +591,6 @@ class GeminiAgent(ABC):
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
     ) -> str:
-    
         # TODO: Adicionar lógica para diferentes serviços de extração de audio
         #### TODO: Adaptar lógica de audio da openai para gemini
 
@@ -582,7 +617,7 @@ class GeminiAgent(ABC):
         content: _Content | None = None
         while not is_approved:
             await self._handle_chain_of_thought()
-            content = await self._api_call(response_format=response_format)
+            content = await self._api_call()
             content = await self._handle_tool_calls(content, response_format)
             if self.feedback_loop:
                 is_approved, content = await self._handle_feedback_loop(
@@ -664,13 +699,14 @@ class GeminiAgent(ABC):
                                     name=function_call.name,
                                     response={"result": str(result)},
                                 ),
-                            )
+                            ),
                         ],
                     ),
                 )
-            content = await self._api_call(response_format=response_format)
+            content = await self._api_call()
             function_calls = self._extract_function_calls(content)
 
+        content = await self._api_call(response_format=response_format)
         return content
 
     async def _handle_feedback_loop(
