@@ -1,0 +1,26 @@
+[project]
+name = "examples"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=6.29.5",
+    "ironhide",
+]
+
+[tool.mypy]
+strict = true
+exclude = ["venv", ".venv", "alembic"]
+
+[tool.ruff]
+select = ["ALL"]
+ignore = [
+    "E501",     # line-too-long
+    "PLR0913",  # too-many-arguments
+    "TD003",    # missing-todo-link
+    "TD002",    # missing-todo-author
+]
+
+[tool.uv.sources]
+ironhide = { path = "../", editable = true }
