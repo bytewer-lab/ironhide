@@ -426,22 +426,6 @@ class BaseAgent(ABC):
                     logger.debug(error_response.error.message)
                 except Exception:
                     logger.debug(response.text)
-                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS.value:
-                    if (
-                        "You exceeded your current quota"
-                        in error_response.error.message
-                    ):
-                        logger.error(
-                            "Quota exceeded. Please check your plan and billing details."
-                        )
-                        raise Exception(error_response.error.message)
-                    logger.warning(
-                        "Rate limit reached for requests. Retrying in 10 seconds..."
-                    )
-                    # TODO: esse valor deve ser capturado da string do erro
-                    await sleep(10)
-                    continue
-                raise Exception(error_response.error.message)
             try:
                 completion = _ChatCompletion(**response.json())
             except Exception:
