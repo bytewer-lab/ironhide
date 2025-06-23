@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar
 
 import httpx
 from httpx._types import RequestFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from ironhide.settings import settings
 from ironhide.utils import PROVIDER_URLS, Provider
@@ -156,7 +156,7 @@ class _ErrorResponse(BaseModel):
     error: _Error
 
 
-async def audio_transcription(files: RequestFiles, api_key: str) -> str:
+async def audio_transcription(files: RequestFiles, api_key: SecretStr) -> str:
     """Transcribes audio files to text using the OpenAI API.
 
     Args:
@@ -168,7 +168,7 @@ async def audio_transcription(files: RequestFiles, api_key: str) -> str:
 
     """
     transcription_url = "https://api.openai.com/v1/audio/transcriptions"
-    transcription_headers = {"Authorization": f"Bearer {api_key}"}
+    transcription_headers = {"Authorization": f"Bearer {api_key.get_secret_value()}"}
     async with httpx.AsyncClient() as client:
         data = {"model": settings.ironhide_audio_to_text_model}
         transcription_response = await client.post(
@@ -220,7 +220,7 @@ class BaseAgent(ABC):
 
     provider_url: str
     provider: Provider | None = None
-    api_key: str
+    api_key: SecretStr
     model: str
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
@@ -230,7 +230,7 @@ class BaseAgent(ABC):
         self,
         provider_url: str | None = None,
         provider: Provider | None = None,
-        api_key: str | None = None,
+        api_key: SecretStr | None = None,
         model: str | None = None,
         instructions: str | None = None,
         chain_of_thought: tuple[str, ...] | None = None,
@@ -274,7 +274,9 @@ class BaseAgent(ABC):
         self.dict_tool: dict[str, Any] = {}
         self.tools = self._generate_tools()
         self.client = httpx.AsyncClient()
-        self.headers = _Headers(Authorization=f"Bearer {self.api_key}")
+        self.headers = _Headers(
+            Authorization=f"Bearer {self.api_key.get_secret_value()}",
+        )
 
     def _get_history(self) -> list[_Message]:
         return []
