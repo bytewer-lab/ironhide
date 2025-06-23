@@ -382,6 +382,17 @@ class BaseAgent(ABC):
             return await selected_tool(**args)
         return selected_tool(**args)
 
+    def _log_request_error(self, data: _Data, response_text: str) -> None:
+        logger.exception(
+            "  >>>  Request Error:  %s",
+            data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
+        )
+        try:
+            error_response = _ErrorResponse.model_validate_json(response_text)
+            logger.debug(error_response.error.message)
+        except ValidationError:
+            logger.debug(response_text)
+
     async def _api_call(
         self,
         *,
@@ -429,6 +440,19 @@ class BaseAgent(ABC):
                     timeout=settings.ironhide_request_timeout,
                 )
                 response.raise_for_status()
+                completion = _ChatCompletion(**response.json())
+            except ValidationError:
+                if retries < max_retries:
+                    retries += 1
+                    logger.warning(
+                        "Validation failed, retrying (%d/%d)...",
+                        retries,
+                        max_retries,
+                    )
+                    await sleep(settings.ironhide_retry_delay)
+                    continue
+                self._log_request_error(data, response.text)
+                raise
             except httpx.HTTPStatusError as exc:
                 if retries < max_retries and exc.response.status_code in retry_codes:
                     retries += 1
@@ -440,18 +464,9 @@ class BaseAgent(ABC):
                     )
                     await sleep(settings.ironhide_retry_delay)
                     continue
-                logger.exception(
-                    "  >>>  Request Error:  %s",
-                    data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
-                )
-                try:
-                    error_response = _ErrorResponse.model_validate_json(response.text)
-                    logger.debug(error_response.error.message)
-                except ValidationError:
-                    logger.debug(response.text)
+                self._log_request_error(data, exc.response.text)
                 raise
             break
-        completion = _ChatCompletion(**response.json())
         logger.debug(
             "  >>>  Response:  %s",
             completion.model_dump_json(by_alias=True, exclude_none=True, indent=4),
