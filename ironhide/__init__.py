@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar
 
 import httpx
 from httpx._types import RequestFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ironhide.settings import settings
 from ironhide.utils import PROVIDER_URLS, Provider
@@ -405,33 +405,51 @@ class BaseAgent(ABC):
             data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
         )
         completion: _ChatCompletion
+        retries = 0
+        max_retries = settings.ironhide_max_retries
+        retry_codes = [
+            HTTPStatus.TOO_MANY_REQUESTS,
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            HTTPStatus.BAD_GATEWAY,
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            HTTPStatus.GATEWAY_TIMEOUT,
+        ]
         while True:
-            response = await self.client.post(
-                self.provider_url + "chat/completions",
-                headers=self.headers.model_dump(by_alias=True),
-                json=data.model_dump(
-                    by_alias=True,
-                    mode="json",
-                    exclude_none=True,
-                ),
-                timeout=settings.ironhide_request_timeout,
-            )
-            if response.status_code != HTTPStatus.OK.value:
-                logger.error(
+            try:
+                response = await self.client.post(
+                    self.provider_url + "chat/completions",
+                    headers=self.headers.model_dump(by_alias=True),
+                    json=data.model_dump(
+                        by_alias=True,
+                        mode="json",
+                        exclude_none=True,
+                    ),
+                    timeout=settings.ironhide_request_timeout,
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if retries < max_retries and exc.response.status_code in retry_codes:
+                    retries += 1
+                    logger.warning(
+                        "Request failed with status %s, retrying (%d/%d)...",
+                        exc.response.status_code,
+                        retries,
+                        max_retries,
+                    )
+                    await sleep(settings.ironhide_retry_delay)
+                    continue
+                logger.exception(
                     "  >>>  Request Error:  %s",
                     data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
                 )
                 try:
                     error_response = _ErrorResponse.model_validate_json(response.text)
                     logger.debug(error_response.error.message)
-                except Exception:
+                except ValidationError:
                     logger.debug(response.text)
-            try:
-                completion = _ChatCompletion(**response.json())
-            except Exception:
-                logger.exception("Failed to parse response")
-                continue
+                raise
             break
+        completion = _ChatCompletion(**response.json())
         logger.debug(
             "  >>>  Response:  %s",
             completion.model_dump_json(by_alias=True, exclude_none=True, indent=4),
@@ -497,7 +515,7 @@ class BaseAgent(ABC):
     async def _handle_chain_of_thought(self) -> None:
         if self.chain_of_thought:
             for thought in self.chain_of_thought:
-                self.messages.append(_Message(role=_Role.system, content=thought))
+                self.messages.append(_Message(role=_Role.user, content=thought))
                 await self._api_call(is_thought=True)
 
     async def _handle_tool_calls(

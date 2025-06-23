@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # General
     log_level: str = "INFO"
     ironhide_request_timeout: int = 60
+    ironhide_max_retries: int = 3
+    ironhide_retry_delay: int = 3
 
 
 settings = Settings()
