@@ -139,6 +139,7 @@ class _ResponseFormat(BaseModel):
 
 class _Data(BaseModel):
     model: str
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
     messages: list[_Message]
     response_format: _ResponseFormat | None = None
     tools: list[_ToolDefinition] | None = None
@@ -222,6 +223,7 @@ class BaseAgent(ABC):
     provider: Provider | None = None
     api_key: SecretStr
     model: str
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
     messages: list[_Message]
@@ -232,6 +234,7 @@ class BaseAgent(ABC):
         provider: Provider | None = None,
         api_key: SecretStr | None = None,
         model: str | None = None,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         instructions: str | None = None,
         chain_of_thought: tuple[str, ...] | None = None,
         messages: list[_Message] | None = None,
@@ -261,6 +264,11 @@ class BaseAgent(ABC):
         )
         self.model = (
             model or getattr(self, "model", None) or settings.ironhide_completions_model
+        )
+        self.reasoning_effort = reasoning_effort or getattr(
+            self,
+            "reasoning_effort",
+            None,
         )
         self.instructions = instructions or getattr(self, "instructions", None)
         self.chain_of_thought = chain_of_thought or getattr(
@@ -408,6 +416,7 @@ class BaseAgent(ABC):
 
         data = _Data(
             model=self.model,
+            reasoning_effort=self.reasoning_effort,
             messages=api_messages,
             response_format=self._make_response_format_section(response_format),
             tools=self.tools or None,
