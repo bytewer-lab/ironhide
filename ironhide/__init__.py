@@ -534,6 +534,7 @@ class BaseAgent(ABC):
             for thought in self.chain_of_thought:
                 self.messages.append(_Message(role=_Role.user, content=thought))
                 await self._api_call(is_thought=True)
+            self.messages.append(_Message(role=_Role.user, content=""))
 
     async def _handle_tool_calls(
         self,
