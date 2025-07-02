@@ -20,6 +20,9 @@ dev-dependencies = ["mypy>=1.14.1", "ruff>=0.9.3"]
 strict = true
 exclude = ["venv", ".venv", "alembic"]
 
+[tool.pyright]
+typeCheckingMode = "strict"
+
 [tool.ruff]
 select = ["ALL"]
 ignore = [

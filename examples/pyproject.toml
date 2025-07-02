@@ -13,6 +13,9 @@ dependencies = [
 strict = true
 exclude = ["venv", ".venv", "alembic"]
 
+[tool.pyright]
+typeCheckingMode = "strict"
+
 [tool.ruff]
 select = ["ALL"]
 ignore = [
