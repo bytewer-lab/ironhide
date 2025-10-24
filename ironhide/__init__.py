@@ -227,6 +227,7 @@ class BaseAgent(ABC):
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
     messages: list[_Message]
+    usage_history: list[_Usage]
 
     def __init__(
         self,
@@ -279,6 +280,7 @@ class BaseAgent(ABC):
         self.messages = (
             messages or getattr(self, "messages", None) or self._get_history()
         )
+        self.usage_history = []
         self.dict_tool: dict[str, Any] = {}
         self.tools = self._generate_tools()
         self.client = httpx.AsyncClient()
@@ -406,7 +408,7 @@ class BaseAgent(ABC):
         *,
         is_thought: bool = False,
         response_format: type[BaseModel] | None = None,
-    ) -> _Message:
+    ) -> _ChatCompletion:
         instruction_message_list = (
             [_Message(role=_Role.system, content=self.instructions)]
             if self.instructions
@@ -482,7 +484,8 @@ class BaseAgent(ABC):
         )
         message = completion.choices[0].message
         self.messages.append(message)
-        return message
+        self.usage_history.append(completion.usage)
+        return completion
 
     async def _context_provider(self, input_message: str) -> str:
         return input_message
@@ -492,7 +495,7 @@ class BaseAgent(ABC):
         input_message: str | RequestFiles,
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
-    ) -> str:
+    ) -> _ChatCompletion:
         processed_message: str = (
             await audio_transcription(input_message, self.api_key)
             if not isinstance(input_message, str)
@@ -510,15 +513,63 @@ class BaseAgent(ABC):
             )
 
         await self._handle_chain_of_thought()
-        message = await self._api_call()
-        message = await self._handle_tool_calls(message, response_format)
+        completion = await self._api_call()
+        completion.choices[0].message = await self._handle_tool_calls(
+            completion.choices[0].message, response_format
+        )
         if response_format:
-            message = await self._api_call(response_format=response_format)
+            completion = await self._api_call(response_format=response_format)
 
-        content = ""
-        if message:
-            content = str(message.content)
-        return content
+        completion.usage = self._calculate_usage()
+
+        return completion
+
+    def _calculate_usage(self) -> _Usage:
+        usage_total: _Usage = _Usage(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            prompt_tokens_details=_PromptTokensDetails(
+                cached_tokens=0,
+                audio_tokens=0,
+            ),
+            completion_tokens_details=_CompletionTokensDetails(
+                reasoning_tokens=0,
+                audio_tokens=0,
+                accepted_prediction_tokens=0,
+                rejected_prediction_tokens=0,
+            ),
+        )
+        for usage in self.usage_history:
+            usage_total.prompt_tokens += usage.prompt_tokens
+            usage_total.completion_tokens += usage.completion_tokens
+            usage_total.total_tokens += usage.total_tokens
+
+            if usage.prompt_tokens_details and usage_total.prompt_tokens_details:
+                usage_total.prompt_tokens_details.cached_tokens += (
+                    usage.prompt_tokens_details.cached_tokens
+                )
+                usage_total.prompt_tokens_details.audio_tokens += (
+                    usage.prompt_tokens_details.audio_tokens
+                )
+
+            if (
+                usage.completion_tokens_details
+                and usage_total.completion_tokens_details
+            ):
+                usage_total.completion_tokens_details.reasoning_tokens += (
+                    usage.completion_tokens_details.reasoning_tokens
+                )
+                usage_total.completion_tokens_details.audio_tokens += (
+                    usage.completion_tokens_details.audio_tokens
+                )
+                usage_total.completion_tokens_details.accepted_prediction_tokens += (
+                    usage.completion_tokens_details.accepted_prediction_tokens
+                )
+                usage_total.completion_tokens_details.rejected_prediction_tokens += (
+                    usage.completion_tokens_details.rejected_prediction_tokens
+                )
+        return usage_total
 
     async def _handle_image_message(
         self,
@@ -564,7 +615,8 @@ class BaseAgent(ABC):
                         tool_call_id=id_,
                     ),
                 )
-            message = await self._api_call()
+            completion = await self._api_call()
+            message = completion.choices[0].message
             tool_calls = message.tool_calls
 
         if response_format:
@@ -576,7 +628,7 @@ class BaseAgent(ABC):
         self,
         input_message: str | RequestFiles,
         files: RequestFiles | None = None,
-    ) -> str:
+    ) -> _ChatCompletion:
         """Handle a chat interaction, optionally processing audio or image files.
 
         Args:
@@ -584,10 +636,12 @@ class BaseAgent(ABC):
             files: Optional image files to be included in the chat.
 
         Returns:
-            The assistant's response as a string.
+            The ChatCompletion object containing the assistant's response and usage information.
 
         """
-        return await self._base_chat(input_message=input_message, files=files)
+        completion = await self._base_chat(input_message=input_message, files=files)
+        logger.debug("  >>>  Usage:  %s", self.usage_history)
+        return completion
 
     async def structured_chat(
         self,
@@ -606,13 +660,15 @@ class BaseAgent(ABC):
             The assistant's response as a Pydantic model instance.
 
         """
-        content = await self._base_chat(
+        completion = await self._base_chat(
             input_message=input_message,
             files=files,
             response_format=response_format,
         )
         # TODO: Adicionar try catch na validação
-        return response_format.model_validate_json(content)
+        return response_format.model_validate_json(
+            str(completion.choices[0].message.content),
+        )
 
 
 F = TypeVar("F", bound=Callable[..., Any])
