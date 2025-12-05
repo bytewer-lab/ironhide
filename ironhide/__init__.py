@@ -7,7 +7,7 @@ from asyncio import sleep
 from collections.abc import Buffer, Callable
 from enum import Enum
 from http import HTTPStatus
-from typing import Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, TypeVar, get_args, get_origin
 
 import httpx
 from httpx._types import RequestFiles
@@ -342,7 +342,7 @@ class BaseAgent(ABC):
         )
 
     def _generate_tools(self) -> list[_ToolDefinition]:
-        tools = []
+        tools: list[_ToolDefinition] = []
         json_type_mapping = {
             str: "string",
             int: "number",
@@ -352,23 +352,33 @@ class BaseAgent(ABC):
         for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
             if not getattr(method, "is_tool", False):
                 continue
-            properties = {
-                param_name: _PropertyDefinition(
-                    type=json_type_mapping.get(param.annotation, "string"),
-                    description=(
-                        param.annotation.__metadata__[0]
-                        if getattr(param.annotation, "__metadata__", None)
-                        else ""
-                    ),
+            properties: dict[str, _PropertyDefinition] = {}
+            required: list[str] = []
+            has_optional_params: bool = False
+            for param_name, param in inspect.signature(method).parameters.items():
+                if param_name == "self":
+                    continue
+
+                annotation = param.annotation
+                param_description = ""
+                param_type = annotation
+
+                if get_origin(annotation) is Annotated:
+                    args = get_args(annotation)
+                    param_type = args[0]
+                    if len(args) > 1 and isinstance(args[1], str):
+                        param_description = args[1]
+
+                if param.default is param.empty:
+                    required.append(param_name)
+                else:
+                    has_optional_params = True
+
+                properties[param_name] = _PropertyDefinition(
+                    type=json_type_mapping.get(param_type, "string"),
+                    description=param_description,
                 )
-                for param_name, param in inspect.signature(method).parameters.items()
-                if param_name != "self"
-            }
-            required = [
-                param_name
-                for param_name, param in inspect.signature(method).parameters.items()
-                if param.default is param.empty and param_name != "self"
-            ]
+
             tools.append(
                 _ToolDefinition(
                     function=_FunctionDefinition(
@@ -378,6 +388,7 @@ class BaseAgent(ABC):
                             properties=properties,
                             required=required,
                         ),
+                        strict=not has_optional_params,
                     ),
                 ),
             )
