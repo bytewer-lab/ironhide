@@ -170,7 +170,7 @@ async def audio_transcription(files: RequestFiles, api_key: SecretStr) -> str:
     """
     transcription_url = "https://api.openai.com/v1/audio/transcriptions"
     transcription_headers = {"Authorization": f"Bearer {api_key.get_secret_value()}"}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=settings.ironhide_request_timeout) as client:
         data = {"model": settings.ironhide_audio_to_text_model}
         transcription_response = await client.post(
             transcription_url,
@@ -227,6 +227,8 @@ class BaseAgent(ABC):
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
     messages: list[_Message]
+    usage_history: list[_Usage]
+    usage: _Usage
 
     def __init__(
         self,
@@ -277,7 +279,7 @@ class BaseAgent(ABC):
             None,
         )
         self.messages = (
-            messages or getattr(self, "messages", None) or self._get_history()
+            messages or getattr(self, "messages", None) or self.hook_load_messages()
         )
         self.dict_tool: dict[str, Any] = {}
         self.tools = self._generate_tools()
@@ -285,9 +287,36 @@ class BaseAgent(ABC):
         self.headers = _Headers(
             Authorization=f"Bearer {self.api_key.get_secret_value()}",
         )
+        self.usage_history: list[_Usage] = []
+        self.usage = _Usage(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+        )
 
-    def _get_history(self) -> list[_Message]:
+    def hook_load_messages(self) -> list[_Message]:
+        """Load initial message history for the agent.
+
+        This method can be overridden by subclasses to implement custom message
+        loading logic (e.g., from a database or file).
+
+        Returns:
+            An empty list by default. Override to provide initial messages.
+
+        """
         return []
+
+    def hook_process_usage(self, _total_tokens: int) -> None:
+        """Process the token usage statistics by handling the total number of tokens used.
+
+        Args:
+            total_tokens (int): The total number of tokens to process.
+
+        Returns:
+            None
+
+        """
+        return
 
     def _make_response_format_section(
         self,
@@ -491,11 +520,25 @@ class BaseAgent(ABC):
             "  >>>  Response:  %s",
             completion.model_dump_json(by_alias=True, exclude_none=True, indent=4),
         )
+        if completion.usage:
+            self.usage_history.append(completion.usage)
         message = completion.choices[0].message
         self.messages.append(message)
         return message
 
-    async def _context_provider(self, input_message: str) -> str:
+    async def hook_augment_user_input(self, input_message: str) -> str:
+        """Augment the user input message before processing.
+
+        This method can be overridden by subclasses to implement custom
+        message augmentation logic (e.g., validation, transformation, or enrichment).
+
+        Args:
+            input_message: The original user input message.
+
+        Returns:
+            The augmented user input message.
+
+        """
         return input_message
 
     async def _base_chat(
@@ -516,7 +559,7 @@ class BaseAgent(ABC):
             self.messages.append(
                 _Message(
                     role=_Role.user,
-                    content=await self._context_provider(processed_message),
+                    content=await self.hook_augment_user_input(processed_message),
                 ),
             )
 
@@ -526,10 +569,60 @@ class BaseAgent(ABC):
         if response_format:
             message = await self._api_call(response_format=response_format)
 
+        self.usage = self._calculate_usage()
+        self.hook_process_usage(self.usage.total_tokens)
+
         content = ""
         if message:
             content = str(message.content)
         return content
+
+    def _calculate_usage(self) -> _Usage:
+        usage_total: _Usage = _Usage(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            prompt_tokens_details=_PromptTokensDetails(
+                cached_tokens=0,
+                audio_tokens=0,
+            ),
+            completion_tokens_details=_CompletionTokensDetails(
+                reasoning_tokens=0,
+                audio_tokens=0,
+                accepted_prediction_tokens=0,
+                rejected_prediction_tokens=0,
+            ),
+        )
+        for usage in self.usage_history:
+            usage_total.prompt_tokens += usage.prompt_tokens
+            usage_total.completion_tokens += usage.completion_tokens
+            usage_total.total_tokens += usage.total_tokens
+
+            if usage.prompt_tokens_details and usage_total.prompt_tokens_details:
+                usage_total.prompt_tokens_details.cached_tokens += (
+                    usage.prompt_tokens_details.cached_tokens
+                )
+                usage_total.prompt_tokens_details.audio_tokens += (
+                    usage.prompt_tokens_details.audio_tokens
+                )
+
+            if (
+                usage.completion_tokens_details
+                and usage_total.completion_tokens_details
+            ):
+                usage_total.completion_tokens_details.reasoning_tokens += (
+                    usage.completion_tokens_details.reasoning_tokens
+                )
+                usage_total.completion_tokens_details.audio_tokens += (
+                    usage.completion_tokens_details.audio_tokens
+                )
+                usage_total.completion_tokens_details.accepted_prediction_tokens += (
+                    usage.completion_tokens_details.accepted_prediction_tokens
+                )
+                usage_total.completion_tokens_details.rejected_prediction_tokens += (
+                    usage.completion_tokens_details.rejected_prediction_tokens
+                )
+        return usage_total
 
     async def _handle_image_message(
         self,
