@@ -306,11 +306,26 @@ class BaseAgent(ABC):
         """
         return []
 
-    def hook_process_usage(self, _total_tokens: int) -> None:
+    def hook_process_usage(self, _usage: _Usage) -> None:
         """Process the token usage statistics by handling the total number of tokens used.
 
         Args:
             total_tokens (int): The total number of tokens to process.
+
+        Returns:
+            None
+
+        """
+        return
+
+    def hook_save_transcription(self, _transcription: str) -> None:
+        """Save the transcribed text from audio processing.
+
+        This method can be overridden by subclasses to implement custom
+        transcription saving logic (e.g., to a database or file).
+
+        Args:
+            _transcription: The transcribed text from audio input.
 
         Returns:
             None
@@ -547,11 +562,11 @@ class BaseAgent(ABC):
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
     ) -> str:
-        processed_message: str = (
-            await audio_transcription(input_message, self.api_key)
-            if not isinstance(input_message, str)
-            else input_message
-        )
+        if not isinstance(input_message, str):
+            processed_message = await audio_transcription(input_message, self.api_key)
+            self.hook_save_transcription(processed_message)
+        else:
+            processed_message = input_message
 
         if files:
             await self._handle_image_message(processed_message, files)
@@ -570,7 +585,7 @@ class BaseAgent(ABC):
             message = await self._api_call(response_format=response_format)
 
         self.usage = self._calculate_usage()
-        self.hook_process_usage(self.usage.total_tokens)
+        self.hook_process_usage(self.usage)
 
         content = ""
         if message:
