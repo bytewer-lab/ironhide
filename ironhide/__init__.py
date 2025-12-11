@@ -229,6 +229,7 @@ class BaseAgent(ABC):
     messages: list[_Message]
     usage_history: list[_Usage]
     usage: _Usage
+    _last_completion: _ChatCompletion
 
     def __init__(
         self,
@@ -306,11 +307,14 @@ class BaseAgent(ABC):
         """
         return []
 
-    def hook_process_usage(self, _usage: _Usage) -> None:
-        """Process the token usage statistics by handling the total number of tokens used.
+    async def hook_process_usage(self, _completion: _ChatCompletion) -> None:
+        """Process usage information from a chat completion.
+
+        This method can be overridden by subclasses to implement custom
+        usage processing logic (e.g., logging, analytics, or cost tracking).
 
         Args:
-            total_tokens (int): The total number of tokens to process.
+            _context: The completion context containing usage statistics.
 
         Returns:
             None
@@ -318,7 +322,7 @@ class BaseAgent(ABC):
         """
         return
 
-    def hook_save_transcription(self, _transcription: str) -> None:
+    async def hook_save_transcription(self, _transcription: str) -> None:
         """Save the transcribed text from audio processing.
 
         This method can be overridden by subclasses to implement custom
@@ -505,6 +509,7 @@ class BaseAgent(ABC):
                 )
                 response.raise_for_status()
                 completion = _ChatCompletion(**response.json())
+                self._last_completion = completion
             except ValidationError:
                 if retries < max_retries:
                     retries += 1
@@ -564,7 +569,7 @@ class BaseAgent(ABC):
     ) -> str:
         if not isinstance(input_message, str):
             processed_message = await audio_transcription(input_message, self.api_key)
-            self.hook_save_transcription(processed_message)
+            await self.hook_save_transcription(processed_message)
         else:
             processed_message = input_message
 
@@ -585,7 +590,17 @@ class BaseAgent(ABC):
             message = await self._api_call(response_format=response_format)
 
         self.usage = self._calculate_usage()
-        self.hook_process_usage(self.usage)
+
+        completion = _ChatCompletion(
+            id=self._last_completion.id,
+            object=self._last_completion.object,
+            created=self._last_completion.created,
+            model=self._last_completion.model,
+            choices=self._last_completion.choices,
+            usage=self.usage,
+        )
+
+        await self.hook_process_usage(completion)
 
         content = ""
         if message:
