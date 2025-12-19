@@ -31,6 +31,7 @@ class Provider(str, Enum):
     anthropic = "anthropic"
     deepseek = "deepseek"
     qwen = "qwen"
+    openrouter = "openrouter"
 
 
 PROVIDER_URLS: dict[Provider, str] = {
@@ -40,6 +41,7 @@ PROVIDER_URLS: dict[Provider, str] = {
     Provider.anthropic: "https://api.anthropic.com/v1/",
     Provider.deepseek: "https://api.deepseek.com/",
     Provider.qwen: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/",
+    Provider.openrouter: "https://openrouter.ai/api/v1/",
 }
 
 
