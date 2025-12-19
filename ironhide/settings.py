@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ironhide_api_key: SecretStr = SecretStr("")
     ironhide_completions_model: str = "gpt-4o-mini"
     ironhide_audio_to_text_model: str = "whisper-1"
+    ironhide_transcription_api_key: SecretStr = SecretStr("")
 
     # General
     log_level: str = "INFO"

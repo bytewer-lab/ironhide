@@ -236,6 +236,7 @@ class BaseAgent(ABC):
         provider_url: str | None = None,
         provider: Provider | None = None,
         api_key: SecretStr | None = None,
+        transcription_api_key: SecretStr | None = None,
         model: str | None = None,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         instructions: str | None = None,
@@ -264,6 +265,12 @@ class BaseAgent(ABC):
         )
         self.api_key = (
             api_key or getattr(self, "api_key", None) or settings.ironhide_api_key
+        )
+        self.transcription_api_key = (
+            transcription_api_key
+            or getattr(self, "transcription_api_key", None)
+            or settings.ironhide_transcription_api_key
+            or self.api_key
         )
         self.model = (
             model or getattr(self, "model", None) or settings.ironhide_completions_model
@@ -568,7 +575,7 @@ class BaseAgent(ABC):
         files: RequestFiles | None = None,
     ) -> str:
         if not isinstance(input_message, str):
-            processed_message = await audio_transcription(input_message, self.api_key)
+            processed_message = await audio_transcription(input_message, self.transcription_api_key)
             await self.hook_save_transcription(processed_message)
         else:
             processed_message = input_message
