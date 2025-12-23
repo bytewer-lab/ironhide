@@ -171,7 +171,7 @@ async def audio_transcription(files: RequestFiles, api_key: SecretStr) -> str:
     transcription_url = "https://api.openai.com/v1/audio/transcriptions"
     transcription_headers = {"Authorization": f"Bearer {api_key.get_secret_value()}"}
     async with httpx.AsyncClient(timeout=settings.ironhide_request_timeout) as client:
-        data = {"model": settings.ironhide_audio_to_text_model}
+        data = {"model": settings.ironhide_transcription_model}
         transcription_response = await client.post(
             transcription_url,
             headers=transcription_headers,
