@@ -83,10 +83,19 @@ class _ToolFunction(BaseModel):
     arguments: str
 
 
+class _ThoughtSignature(BaseModel):
+    thought_signature: str
+
+
+class _ExtraContent(BaseModel):
+    google: _ThoughtSignature
+
+
 class _ToolCall(BaseModel):
     id: str
     type: Literal["function"]
     function: _ToolFunction
+    extra_content: _ExtraContent | None = None
 
 
 class _TextContent(BaseModel):
