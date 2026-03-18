@@ -747,22 +747,46 @@ class BaseAgent(ABC):
     ) -> T:
         """Handle a chat interaction with a structured response.
 
+        Sends a message and returns the response parsed into a Pydantic model.
+        The response is validated using ``response_format.model_validate_json``.
+        If validation fails, the call is automatically retried up to
+        ``ironhide_max_retries`` times before raising the ``ValidationError``.
+
         Args:
-            input_message: The user's input message, which can be text or audio files.
-            response_format: The Pydantic model to validate and parse the response.
-            files: Optional image files to be included in the chat.
+            input_message: The user's input message, which can be text or audio
+                files (``RequestFiles``) that will be transcribed before sending.
+            response_format: The Pydantic model class used to validate and parse
+                the model's response.
+            files: Optional image files to be included in the message.
 
         Returns:
-            The assistant's response as a Pydantic model instance.
+            An instance of ``response_format`` populated with the model's response.
+
+        Raises:
+            ValidationError: If the response cannot be parsed after all retries.
 
         """
-        content = await self._base_chat(
-            input_message=input_message,
-            files=files,
-            response_format=response_format,
-        )
-        # TODO: Adicionar try catch na validação
-        return response_format.model_validate_json(content)
+        max_retries = settings.ironhide_max_retries
+        retries = 0
+        while True:
+            content = await self._base_chat(
+                input_message=input_message,
+                files=files,
+                response_format=response_format,
+            )
+            try:
+                return response_format.model_validate_json(content)
+            except ValidationError:
+                if retries < max_retries:
+                    retries += 1
+                    logger.warning(
+                        "Validation failed, retrying (%d/%d)...",
+                        retries,
+                        max_retries,
+                    )
+                    continue
+                raise
+
 
 
 F = TypeVar("F", bound=Callable[..., Any])
